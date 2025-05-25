@@ -1,15 +1,17 @@
 # Link Checker
 
-A fast and reliable link checker for markdown files written in Go.
+A fast and reliable link checker for markdown files and web pages written in Go.
 
 ## Features
 
 - ✅ **Recursive scanning** - Scan directories recursively for markdown files
+- ✅ **Direct URL checking** - Check web pages directly for dead links
 - ✅ **Flexible ignore patterns** - Ignore specific domains or regex patterns
 - ✅ **Configurable timeout** - Set custom HTTP request timeouts
 - ✅ **Dead link filtering** - Show only broken links
 - ✅ **Multiple output formats** - Text and JSON output formats
 - ✅ **Detailed reporting** - Shows source file, line numbers, and error details
+- ✅ **Mixed input support** - Combine files, directories, and URLs in one command
 
 ## Installation
 
@@ -30,6 +32,13 @@ go build -o linkchecker main.go
 
 # Check specific directory
 ./linkchecker ./docs
+
+# Check web pages for dead links
+./linkchecker https://example.com
+./linkchecker https://github.com/user/repo
+
+# Mixed usage - files and URLs
+./linkchecker README.md https://example.com ./docs
 ```
 
 ### Available Flags
@@ -49,6 +58,12 @@ go build -o linkchecker main.go
 ./linkchecker --recursive --timeout=10s ./docs
 ```
 
+#### Check web page for dead links
+```bash
+./linkchecker https://example.com
+./linkchecker --only-dead --format=json https://github.com/user/repo
+```
+
 #### Show only broken links in JSON format
 ```bash
 ./linkchecker --only-dead --format=json ./
@@ -59,7 +74,12 @@ go build -o linkchecker main.go
 ./linkchecker --ignore="example.com,localhost,*.test.local" ./docs
 ```
 
-#### Complex example
+#### Check URL with custom settings
+```bash
+./linkchecker --ignore="ads.example.com,*.tracking.com" --timeout=10s https://mywebsite.com
+```
+
+#### Complex example with mixed inputs
 ```bash
 ./linkchecker \
   --recursive \
@@ -67,7 +87,7 @@ go build -o linkchecker main.go
   --timeout=15s \
   --only-dead \
   --format=json \
-  ./docs
+  ./docs https://mysite.com README.md
 ```
 
 ## Output Formats
@@ -76,7 +96,8 @@ go build -o linkchecker main.go
 
 ```
 Link Checker Configuration:
-  Paths: [./docs]
+  File Paths: [./docs]
+  URLs to Check: [https://example.com]
   Recursive: true
   Timeout: 30s
   Only Dead Links: false
@@ -85,19 +106,30 @@ Link Checker Configuration:
 Link Check Results
 ==================
 
+📄 Checking file: README.md
+------------------------------------
 ✓ https://example.com
-  Source: README.md:10
+  Line: 10
   Status: 200
 
 ✗ https://broken-link.example
-  Source: docs/guide.md:25
+  Line: 25
+  Status: 404
+  Error: 404 Not Found
+
+🌐 Checking web page: https://example.com
+------------------------------------------
+✓ https://external-link.com
+  Status: 200
+
+✗ https://dead-external-link.com
   Status: 404
   Error: 404 Not Found
 
 Summary:
-  Total Links: 2
-  Valid: 1
-  Invalid: 1
+  Total Links: 5
+  Valid: 2
+  Invalid: 3
   Duration: 1.234s
 ```
 

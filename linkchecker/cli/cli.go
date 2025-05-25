@@ -3,11 +3,17 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
+	"bxfferoverflow.me/link-checker/linkchecker/parser"
+	"bxfferoverflow.me/link-checker/linkchecker/validator"
 	"github.com/spf13/cobra"
 )
 
@@ -19,7 +25,10 @@ type Config struct {
 	OnlyDead    bool
 	Format      string
 	InputPaths  []string
+	InputURLs   []string
 	IgnoreRegex []*regexp.Regexp
+	Workers     int
+	Debug       bool
 }
 
 // Result represents a link check result
@@ -46,15 +55,25 @@ type Output struct {
 var (
 	config  Config
 	rootCmd = &cobra.Command{
-		Use:   "linkchecker [paths...]",
-		Short: "A fast and reliable link checker for markdown files",
-		Long: `Link Checker is a command-line tool that validates links in markdown files.
-It can recursively scan directories, ignore specific domains or patterns,
-and output results in various formats.`,
-		Example: `  linkchecker README.md
+		Use:   "linkchecker [paths or URLs...]",
+		Short: "A fast and reliable link checker for markdown files and web pages",
+		Long: `Link Checker is a command-line tool that validates links in markdown files
+and checks web pages for dead links. You can provide file paths, directories,
+or direct URLs to check.`,
+		Example: `  # Check markdown files
+  linkchecker README.md
   linkchecker --recursive ./docs
-  linkchecker --ignore="example.com,test.local" --timeout=10s ./
-  linkchecker --only-dead --format=json ./docs`,
+  
+  # Check web pages for dead links
+  linkchecker https://example.com
+  linkchecker https://github.com/user/repo
+  
+  # Mixed usage
+  linkchecker README.md https://example.com ./docs
+  
+  # Advanced options
+  linkchecker --ignore="example.com,test.local" --timeout=10s https://mysite.com
+  linkchecker --only-dead --format=json https://example.com`,
 		RunE: runLinkChecker,
 	}
 )
@@ -76,16 +95,32 @@ func init() {
 	rootCmd.Flags().StringVar(&config.Format, "format", "text",
 		"Output format: 'text' or 'json'")
 
+	rootCmd.Flags().IntVar(&config.Workers, "workers", 10,
+		"Number of concurrent workers for link validation (default: 10)")
+
+	rootCmd.Flags().BoolVar(&config.Debug, "debug", false,
+		"Enable debug output")
+
 	// Add help examples
 	rootCmd.SetHelpTemplate(getHelpTemplate())
 }
 
 func runLinkChecker(cmd *cobra.Command, args []string) error {
-	// Set input paths
+	// Set default if no arguments provided
 	if len(args) == 0 {
 		config.InputPaths = []string{"."}
 	} else {
-		config.InputPaths = args
+		// Separate URLs from file paths
+		config.InputPaths = []string{}
+		config.InputURLs = []string{}
+
+		for _, arg := range args {
+			if isURL(arg) {
+				config.InputURLs = append(config.InputURLs, arg)
+			} else {
+				config.InputPaths = append(config.InputPaths, arg)
+			}
+		}
 	}
 
 	// Validate format
@@ -103,9 +138,13 @@ func runLinkChecker(cmd *cobra.Command, args []string) error {
 		printConfig()
 	}
 
-	// TODO: Implement actual link checking logic
-	// For now, return a placeholder implementation
-	return runPlaceholderChecker()
+	// Run actual link checking
+	return runRealLinkChecker()
+}
+
+func isURL(input string) bool {
+	u, err := url.Parse(input)
+	return err == nil && u.Scheme != "" && u.Host != ""
 }
 
 func compileIgnorePatterns() error {
@@ -134,37 +173,43 @@ func compileIgnorePatterns() error {
 
 func printConfig() {
 	fmt.Printf("Link Checker Configuration:\n")
-	fmt.Printf("  Paths: %v\n", config.InputPaths)
+	if len(config.InputPaths) > 0 {
+		fmt.Printf("  File Paths: %v\n", config.InputPaths)
+	}
+	if len(config.InputURLs) > 0 {
+		fmt.Printf("  URLs to Check: %v\n", config.InputURLs)
+	}
 	fmt.Printf("  Recursive: %v\n", config.Recursive)
 	fmt.Printf("  Timeout: %v\n", config.Timeout)
 	fmt.Printf("  Only Dead Links: %v\n", config.OnlyDead)
 	fmt.Printf("  Output Format: %s\n", config.Format)
+	fmt.Printf("  Workers: %d\n", config.Workers)
 	if len(config.IgnoreList) > 0 {
 		fmt.Printf("  Ignore Patterns: %v\n", config.IgnoreList)
 	}
 	fmt.Println()
 }
 
-func runPlaceholderChecker() error {
+func runRealLinkChecker() error {
 	start := time.Now()
+	results := []Result{}
 
-	// Placeholder results for demonstration
-	results := []Result{
-		{
-			URL:        "https://example.com",
-			Status:     "valid",
-			StatusCode: 200,
-			Source:     "README.md",
-			Line:       10,
-		},
-		{
-			URL:        "https://broken-link.example",
-			Status:     "invalid",
-			StatusCode: 404,
-			Error:      "404 Not Found",
-			Source:     "docs/guide.md",
-			Line:       25,
-		},
+	// Process file paths
+	for _, inputPath := range config.InputPaths {
+		fileResults, err := processPath(inputPath)
+		if err != nil {
+			return fmt.Errorf("error processing path '%s': %w", inputPath, err)
+		}
+		results = append(results, fileResults...)
+	}
+
+	// Process URLs
+	for _, inputURL := range config.InputURLs {
+		urlResults, err := processURL(inputURL)
+		if err != nil {
+			return fmt.Errorf("error processing URL '%s': %w", inputURL, err)
+		}
+		results = append(results, urlResults...)
 	}
 
 	// Filter results if only-dead is enabled
@@ -182,9 +227,21 @@ func runPlaceholderChecker() error {
 	output := Output{
 		Results: results,
 	}
-	output.Summary.Total = 2
-	output.Summary.Valid = 1
-	output.Summary.Invalid = 1
+
+	// Calculate summary
+	valid := 0
+	invalid := 0
+	for _, result := range results {
+		if result.Status == "valid" {
+			valid++
+		} else {
+			invalid++
+		}
+	}
+
+	output.Summary.Total = len(results)
+	output.Summary.Valid = valid
+	output.Summary.Invalid = invalid
 	output.Summary.Duration = time.Since(start).String()
 
 	// Output results
@@ -193,6 +250,198 @@ func runPlaceholderChecker() error {
 	}
 
 	return outputText(output)
+}
+
+func processPath(inputPath string) ([]Result, error) {
+	var results []Result
+
+	// Check if path exists
+	info, err := os.Stat(inputPath)
+	if err != nil {
+		return nil, fmt.Errorf("path does not exist: %s", inputPath)
+	}
+
+	if info.IsDir() {
+		// Process directory
+		err := filepath.Walk(inputPath, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+
+			if !info.IsDir() && isMarkdownFile(path) {
+				fileResults, err := processMarkdownFile(path)
+				if err != nil {
+					return err
+				}
+				results = append(results, fileResults...)
+			}
+
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Process single file
+		if isMarkdownFile(inputPath) {
+			fileResults, err := processMarkdownFile(inputPath)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, fileResults...)
+		}
+	}
+
+	return results, nil
+}
+
+func processMarkdownFile(filePath string) ([]Result, error) {
+	links, err := parser.ExtractLinksFromFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("error extracting links from %s: %w", filePath, err)
+	}
+
+	// Filter ignored links
+	var filteredLinks []string
+	for _, link := range links {
+		if !IsURLIgnored(link) {
+			filteredLinks = append(filteredLinks, link)
+		}
+	}
+
+	// Validate links
+	linkStatuses := validator.ValidateLinksAsync(filteredLinks, filepath.Dir(filePath), config.Timeout, config.Workers)
+
+	var results []Result
+	for _, status := range linkStatuses {
+		result := Result{
+			URL:    status.Link,
+			Source: filePath,
+		}
+
+		if status.Valid {
+			result.Status = "valid"
+			result.StatusCode = status.StatusCode
+		} else {
+			result.Status = "invalid"
+			result.Error = status.Reason
+			result.StatusCode = status.StatusCode
+		}
+
+		results = append(results, result)
+	}
+
+	return results, nil
+}
+
+func processURL(inputURL string) ([]Result, error) {
+	// Fetch the web page
+	client := &http.Client{
+		Timeout: config.Timeout,
+	}
+
+	resp, err := client.Get(inputURL)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching URL %s: %w", inputURL, err)
+	}
+	defer resp.Body.Close()
+
+	content, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error reading response from %s: %w", inputURL, err)
+	}
+
+	// Extract links from HTML content
+	links := parser.ExtractLinksFromHTML(content)
+
+	if config.Debug {
+		fmt.Printf("Debug: Found %d raw links in HTML\n", len(links))
+	}
+
+	// Convert relative URLs to absolute URLs
+	baseURL, err := url.Parse(inputURL)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing base URL %s: %w", inputURL, err)
+	}
+
+	var absoluteLinks []string
+	for _, link := range links {
+		// Skip empty links, anchors, and javascript/mailto links
+		if link == "" ||
+			strings.HasPrefix(link, "#") ||
+			strings.HasPrefix(link, "javascript:") ||
+			strings.HasPrefix(link, "mailto:") ||
+			strings.HasPrefix(link, "tel:") {
+			if config.Debug && link != "" {
+				fmt.Printf("Debug: Skipping link: %s (anchor/javascript/mailto/tel)\n", link)
+			}
+			continue
+		}
+
+		// Parse the link URL
+		linkURL, err := url.Parse(link)
+		if err != nil {
+			if config.Debug {
+				fmt.Printf("Debug: Failed to parse link: %s (error: %v)\n", link, err)
+			}
+			continue // Skip invalid URLs
+		}
+
+		// Resolve relative URLs to absolute URLs
+		absoluteURL := baseURL.ResolveReference(linkURL)
+
+		if config.Debug {
+			fmt.Printf("Debug: %s -> %s\n", link, absoluteURL.String())
+		}
+
+		// Only include HTTP/HTTPS URLs for validation
+		if absoluteURL.Scheme == "http" || absoluteURL.Scheme == "https" {
+			absoluteLinks = append(absoluteLinks, absoluteURL.String())
+		} else if config.Debug {
+			fmt.Printf("Debug: Skipping non-HTTP(S) URL: %s (scheme: %s)\n", absoluteURL.String(), absoluteURL.Scheme)
+		}
+	}
+
+	if config.Debug {
+		fmt.Printf("Debug: %d links will be validated\n", len(absoluteLinks))
+	}
+
+	// Filter ignored links
+	var filteredLinks []string
+	for _, link := range absoluteLinks {
+		if !IsURLIgnored(link) {
+			filteredLinks = append(filteredLinks, link)
+		}
+	}
+
+	// Validate links
+	linkStatuses := validator.ValidateLinksAsync(filteredLinks, "", config.Timeout, config.Workers)
+
+	var results []Result
+	for _, status := range linkStatuses {
+		result := Result{
+			URL:    status.Link,
+			Source: inputURL,
+		}
+
+		if status.Valid {
+			result.Status = "valid"
+			result.StatusCode = status.StatusCode
+		} else {
+			result.Status = "invalid"
+			result.Error = status.Reason
+			result.StatusCode = status.StatusCode
+		}
+
+		results = append(results, result)
+	}
+
+	return results, nil
+}
+
+func isMarkdownFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return ext == ".md" || ext == ".markdown"
 }
 
 func outputJSON(output Output) error {
@@ -205,24 +454,38 @@ func outputText(output Output) error {
 	fmt.Printf("Link Check Results\n")
 	fmt.Printf("==================\n\n")
 
+	// Group results by source
+	sourceGroups := make(map[string][]Result)
 	for _, result := range output.Results {
-		status := "✓"
-		if result.Status == "invalid" {
-			status = "✗"
-		}
+		sourceGroups[result.Source] = append(sourceGroups[result.Source], result)
+	}
 
-		fmt.Printf("%s %s\n", status, result.URL)
-		fmt.Printf("  Source: %s", result.Source)
-		if result.Line > 0 {
-			fmt.Printf(":%d", result.Line)
+	for source, results := range sourceGroups {
+		if isURL(source) {
+			fmt.Printf("🌐 Checking web page: %s\n", source)
+		} else {
+			fmt.Printf("📄 Checking file: %s\n", source)
 		}
-		fmt.Println()
+		fmt.Println(strings.Repeat("-", len(source)+20))
 
-		if result.StatusCode > 0 {
-			fmt.Printf("  Status: %d\n", result.StatusCode)
-		}
-		if result.Error != "" {
-			fmt.Printf("  Error: %s\n", result.Error)
+		for _, result := range results {
+			status := "✓"
+			if result.Status == "invalid" {
+				status = "✗"
+			}
+
+			fmt.Printf("%s %s\n", status, result.URL)
+			if result.Line > 0 {
+				fmt.Printf("  Line: %d\n", result.Line)
+			}
+
+			if result.StatusCode > 0 {
+				fmt.Printf("  Status: %d\n", result.StatusCode)
+			}
+			if result.Error != "" {
+				fmt.Printf("  Error: %s\n", result.Error)
+			}
+			fmt.Println()
 		}
 		fmt.Println()
 	}
