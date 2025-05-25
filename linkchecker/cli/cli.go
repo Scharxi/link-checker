@@ -79,11 +79,20 @@ or direct URLs to check.`,
   # Advanced options
   linkchecker --ignore="example.com,test.local" --timeout=10s https://mysite.com
   linkchecker --only-dead --format=json https://example.com`,
-		RunE: runLinkChecker,
+		RunE:               runLinkChecker,
+		DisableFlagParsing: false,
+		DisableAutoGenTag:  true,
+		DisableSuggestions: true,
+		SilenceUsage:       true,
+		SilenceErrors:      true,
+		Args:               cobra.ArbitraryArgs,
 	}
 )
 
 func init() {
+	// Disable automatic completion command
+	rootCmd.CompletionOptions.DisableDefaultCmd = true
+
 	// Define flags
 	rootCmd.Flags().BoolVarP(&config.Recursive, "recursive", "r", false,
 		"Recursively scan directories for markdown files")

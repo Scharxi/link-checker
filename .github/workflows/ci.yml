@@ -113,6 +113,7 @@ jobs:
         GOOS=darwin GOARCH=arm64 go build -o linkchecker-darwin-arm64 .
     
     - name: Test CLI functionality
+      shell: bash
       run: |
         ./linkchecker-linux-amd64 --help
         echo "# Test" > test.md
