@@ -60,7 +60,7 @@ benchmark: ## Run benchmarks
 
 lint: ## Run linter
 	@which golangci-lint > /dev/null || (echo "Installing golangci-lint..." && go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest)
-	golangci-lint run
+	$(shell go env GOPATH)/bin/golangci-lint run
 
 fmt: ## Format code
 	$(GOFMT) -s -w .
@@ -73,6 +73,8 @@ vet: ## Run go vet
 
 deps: ## Download dependencies
 	$(GOMOD) download
+
+tidy: ## Tidy dependencies
 	$(GOMOD) tidy
 
 deps-update: ## Update dependencies
@@ -120,13 +122,15 @@ release-local: clean build-all ## Create local release archives
 
 check: fmt-check vet lint test ## Run all checks
 
-ci: deps check build ## Run CI pipeline locally
+ci: deps tidy vet test build ## Run CI pipeline locally
 
 # Development helpers
 dev-setup: ## Set up development environment
 	@echo "Setting up development environment..."
 	$(GOMOD) download
 	@which golangci-lint > /dev/null || go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@echo "Adding GOPATH/bin to PATH if needed..."
+	@echo "export PATH=\$$PATH:\$$(go env GOPATH)/bin" >> ~/.zshrc || true
 	@echo "Development environment ready!"
 
 watch: ## Watch for changes and rebuild

@@ -32,6 +32,7 @@ func ExtractLinks(content []byte) []string {
 	reader := text.NewReader(content)
 	doc := md.Parser().Parse(reader)
 
+	//nolint:errcheck // ast.Walk error is not relevant for link extraction
 	ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if link, ok := n.(*ast.Link); ok && entering {
 			links = append(links, string(link.Destination))
