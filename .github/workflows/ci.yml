@@ -43,10 +43,15 @@ jobs:
       run: go mod verify
     
     - name: Run tests
-      run: go test -v -race -coverprofile=coverage.out ./...
+      run: |
+        # Clean any existing coverage files and potential problematic files
+        rm -f *.out .out
+        rm -rf .out/
+        # Run tests with coverage using explicit package listing
+        go test -v -race -coverprofile=coverage.out $(go list ./... | grep -v vendor | grep -v '\.out')
     
     - name: Run go vet
-      run: go vet ./...
+      run: go vet $(go list ./... | grep -v vendor | grep -v '\.out')
     
     - name: Upload coverage to Codecov
       if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'
