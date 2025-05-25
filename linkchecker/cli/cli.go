@@ -53,7 +53,12 @@ type Output struct {
 }
 
 var (
-	config  Config
+	config      Config
+	versionInfo struct {
+		version   string
+		buildTime string
+		commit    string
+	}
 	rootCmd = &cobra.Command{
 		Use:   "linkchecker [paths or URLs...]",
 		Short: "A fast and reliable link checker for markdown files and web pages",
@@ -100,6 +105,17 @@ func init() {
 
 	rootCmd.Flags().BoolVar(&config.Debug, "debug", false,
 		"Enable debug output")
+
+	// Add version command
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "version",
+		Short: "Print version information",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Printf("linkchecker %s\n", versionInfo.version)
+			fmt.Printf("Build time: %s\n", versionInfo.buildTime)
+			fmt.Printf("Commit: %s\n", versionInfo.commit)
+		},
+	})
 
 	// Add help examples
 	rootCmd.SetHelpTemplate(getHelpTemplate())
@@ -549,4 +565,11 @@ func IsURLIgnored(url string) bool {
 		}
 	}
 	return false
+}
+
+// SetVersionInfo sets the version information for the CLI
+func SetVersionInfo(version, buildTime, commit string) {
+	versionInfo.version = version
+	versionInfo.buildTime = buildTime
+	versionInfo.commit = commit
 }
