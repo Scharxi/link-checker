@@ -43,10 +43,11 @@ jobs:
       run: go mod verify
     
     - name: Run tests
+      shell: bash
       run: |
         # Clean any existing coverage files and potential problematic files
-        rm -f *.out .out
-        rm -rf .out/
+        rm -f *.out .out 2>/dev/null || true
+        rm -rf .out/ 2>/dev/null || true
         # Run tests with coverage using explicit package listing
         go test -v -race -coverprofile=coverage.out $(go list ./... | grep -v vendor | grep -v '\.out')
     

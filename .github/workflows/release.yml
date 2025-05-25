@@ -35,10 +35,11 @@ jobs:
       run: go mod download
     
     - name: Run tests
+      shell: bash
       run: |
         # Clean any potential problematic files
-        rm -f *.out .out
-        rm -rf .out/
+        rm -f *.out .out 2>/dev/null || true
+        rm -rf .out/ 2>/dev/null || true
         go test -v $(go list ./... | grep -v vendor | grep -v '\.out')
     
     - name: Run go vet
